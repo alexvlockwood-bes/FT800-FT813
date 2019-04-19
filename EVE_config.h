@@ -2,8 +2,35 @@
 @file    EVE_config.h
 @brief   configuration information for some TFTs and some pre-defined colors
 @version 4.0
-@date    2019-04-03
+@date    2019-04-16, original 2019-04-03
 @author  Rudolph Riedel
+@author  Alexis Lockwood <alex@boulderes.com>
+
+This code comes from: https://github.com/RudolphRiedel/FT800-FT813
+
+License:
+
+    MIT License
+
+    Copyright (c) 2017 
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
 @section History
 
@@ -99,6 +126,13 @@
 - added a block for the SAME51J18A
 - added profiles for the BT81x 4.3", 5" and 7" modules from Riverdi - the only tested is the 4.3" with a RVT43ULBNWC00
 
+--------------------------------------------------------------------------------
+Modified by Alexis Lockwood at Boulder Engineering Studio <alex@boulderes.com>
+
+4.0-bes
+- Add support for multiple display drivers and displays
+- Add timeouts to the while-busy loops
+
 */
 
 #ifndef EVE_CONFIG_H_
@@ -143,526 +177,7 @@
 	#define EVE3_43
 #endif
 
-#define EVE_RiTFT43
-
-
-/* While the following lines make things a lot easier like automatically compiling the code for the platform you are compiling for, */
-/* a few things are expected to be taken care of beforehand. */
-/* - setting the Chip-Select and Power-Down pins to Output, Chip-Select = 1 and Power-Down = 0 */
-/* - setting up the SPI which may or not include things like
-       - setting the pins for the SPI to output or some alternate I/O function or mapping that functionality to that pin
-	   - if that is an option with the controller your are using you probably should set the drive-strength for the SPI pins to high
-	   - setting the SS pin on AVRs to output in case it is not used for Chip-Select or Power-Down
-	   - setting SPI to mode 0
-	   - setting SPI to 8 bit with MSB first
-	   - setting SPI clock to no more than 11 MHz for the init - if the display-module works as high
-
-  For the SPI transfers single 8-Bit transfers are used with busy-wait for completion.
-  While this is okay for AVRs that run at 16MHz with the SPI at 8 MHz and therefore do one transfer in 16 clock-cycles,
-  this is wasteful for any 32 bit controller even at higher SPI speeds.
-  However, 32 bit controllers are not my main target (yet) and the amount of data sent over the SPI is really small with the FT8xx.
-  This will be met with a DMA friendly approach in a future release.
-*/
-
-#if !defined (ARDUINO)
-	#if defined (__GNUC__)
-		#if	defined (__AVR__)
-
-			#include <avr/io.h>
-			#include <avr/pgmspace.h>
-			#define F_CPU 16000000UL
-			#include <util/delay.h>
-
-			#define DELAY_MS(ms) _delay_ms(ms)
-
-			#define EVE_CS_PORT	PORTA
-			#define EVE_CS 		(1<<PA3)
-			#define EVE_PDN_PORT	PORTD
-			#define EVE_PDN		(1<<PD3)
-
-			static inline void EVE_pdn_set(void)
-			{
-				EVE_PDN_PORT &= ~EVE_PDN;	/* Power-Down low */
-			}
-
-			static inline void EVE_pdn_clear(void)
-			{
-				EVE_PDN_PORT |= EVE_PDN;	/* Power-Down high */
-			}
-
-			static inline void EVE_cs_set(void)
-			{
-				EVE_CS_PORT &= ~EVE_CS;	/* cs low */
-			}
-
-			static inline void EVE_cs_clear(void)
-			{
-				EVE_CS_PORT |= EVE_CS;	/* cs high */
-			}
-
-			static inline void spi_transmit_async(uint8_t data)
-			{
-#if 1
-				SPDR = data; /* start transmission */
-				while(!(SPSR & (1<<SPIF))); /* wait for transmission to complete - 1us @ 8MHz SPI-Clock */
-#endif
-
-#if 0
-				uint8_t spiIndex  = 0x80;
-				uint8_t k;
-
-				for(k = 0; k <8; k++) {         // Output each bit of spiOutByte
-					if(data & spiIndex) {   // Output MOSI Bit
-						PORTC |= (1<<PORTC1);
-					}
-					else {
-						PORTC &= ~(1<<PORTC1);
-					}
-
-					PORTA |= (1<<PORTA1); // toggle SCK
-					PORTA &= ~(1<<PORTA1);
-
-					spiIndex >>= 1;
-				}
-#endif
-			}
-
-			static inline void spi_transmit(uint8_t data)
-			{
-#if 1
-				SPDR = data; /* start transmission */
-				while(!(SPSR & (1<<SPIF))); /* wait for transmission to complete - 1us @ 8MHz SPI-Clock */
-#endif
-
-#if 0
-				uint8_t spiIndex  = 0x80;
-				uint8_t k;
-
-				for(k = 0; k <8; k++) // Output each bit of spiOutByte
-				{
-					if(data & spiIndex) // Output MOSI Bit
-					{
-						PORTC |= (1<<PORTC1);
-					}
-					else
-					{
-						PORTC &= ~(1<<PORTC1);
-					}
-
-					PORTA |= (1<<PORTA1); // toggle SCK
-					PORTA &= ~(1<<PORTA1);
-
-					spiIndex >>= 1;
-				}
-#endif
-			}
-
-			static inline uint8_t spi_receive(uint8_t data)
-			{
-#if 1
-				SPDR = data; /* start transmission */
-				while(!(SPSR & (1<<SPIF))); /* wait for transmission to complete - 1us @ 8MHz SPI-CLock */
-				return SPDR;
-#endif
-
-#if 0
-				uint8_t spiIndex  = 0x80;
-				uint8_t spiInByte = 0;
-				uint8_t k;
-
-				for(k = 0; k <8; k++) // Output each bit of spiOutByte
-				{
-					if(data & spiIndex) // Output MOSI Bit
-					{
-						PORTC |= (1<<PORTC1);
-					}
-					else
-					{
-						PORTC &= ~(1<<PORTC1);
-					}
-
-					PORTA |= (1<<PORTA1); // toggle SCK
-					PORTA &= ~(1<<PORTA1);
-
-					if(PINC & (1<<PORTC0))
-					{
-						spiInByte |= spiIndex;
-					}
-
-					spiIndex >>= 1;
-				}
-				return spiInByte;
-#endif
-
-			}
-
-			static inline uint8_t fetch_flash_byte(const uint8_t *data)
-			{
-				#if defined (__AVR_HAVE_ELPM__)	/* we have an AVR with more than 64kB FLASH memory */
-					return(pgm_read_byte_far(data));
-				#else
-					return(pgm_read_byte_near(data));
-				#endif
-			}
-
-		#endif /* AVR */
-
-		#if defined (__v851__)
-
-			#include <stdint.h>
-			#include "rh850_regs.h"
-			#include "os.h"
-
-			#define DELAY_MS(ms)	OS_Wait(ms * 1000)
-
-			static inline void EVE_pdn_set(void)
-			{
-				P0 &= ~(1u<<6);
-			}
-
-			static inline void EVE_pdn_clear(void)
-			{
-				P0 |= (1u<<6);
-			}
-
-			static inline void EVE_cs_set(void)
-			{
-				P8 &= ~(1u<<2); /* manually set chip-select to low */
-			}
-
-			static inline void EVE_cs_clear(void)
-			{
-				P8 |= (1u<<2);  /* manually set chip-select to high */
-			}
-
-			static inline void spi_transmit_async(uint8_t data)
-			{
-				CSIH0CTL0 = 0xC1; /* CSIH2PWR = 1;  CSIH2TXE=1; CSIH2RXE = 0; direct access mode  */
-				CSIH0TX0H = data;	/* start transmission */
-				while(CSIH0STR0 & 0x00080);	/* wait for transmission to complete - 800ns @ 10MHz SPI-Clock */
-			}
-
-			static inline void spi_transmit(uint8_t data)
-			{
-				CSIH0CTL0 = 0xC1; /* CSIH2PWR = 1;  CSIH2TXE=1; CSIH2RXE = 0; direct access mode  */
-				CSIH0TX0H = data;	/* start transmission */
-				while(CSIH0STR0 & 0x00080);	/* wait for transmission to complete - 800ns @ 10MHz SPI-Clock */
-			}
-
-			static inline uint8_t spi_receive(uint8_t data)
-			{
-				CSIH0CTL0 = 0xE1; /* CSIH2PWR = 1;  CSIH2TXE=1; CSIH2RXE = 1; direct access mode  */
-				CSIH0TX0H = data;	/* start transmission */
-				while(CSIH0STR0 & 0x00080);	/* wait for transmission to complete - 800ns @ 10MHz SPI-Clock */
-				return (uint8_t) CSIH0RX0H;
-			}
-
-			static inline uint8_t fetch_flash_byte(const uint8_t *data)
-			{
-				return *data;
-			}
-
-		#endif /* RH850 */
-
-		#if defined (__TRICORE__)
-
-			#include "types.h"
-			#include "os.h"
-			#include "dio.h"
-			#include "spi.h"
-
-			#define DELAY_MS(ms) OS_Wait(ms * 1000)
-
-			static inline void EVE_pdn_set(void)
-			{
-				HW_DIO_SetSync(IO_DIO_DIGOUT_PD_TFT, 0);/* Power-Down low */
-			}
-
-			static inline void EVE_pdn_clear(void)
-			{
-				HW_DIO_SetSync(IO_DIO_DIGOUT_PD_TFT, 1);/* Power-Down high */
-			}
-
-			static inline void EVE_cs_set(void)
-			{
-				HW_DIO_SetSync(IO_DIO_DIGOUT_CS_TFT, 0); /* manually set chip-select to low */
-			}
-
-			static inline void EVE_cs_clear(void)
-			{
-				HW_DIO_SetSync(IO_DIO_DIGOUT_CS_TFT, 1);  /* manually set chip-select to high */
-			}
-
-			static inline void spi_transmit_async(uint8_t data)
-			{
-				SPI_ReceiveByte(data);
-			}
-
-			static inline void spi_transmit(uint8_t data)
-			{
-				SPI_ReceiveByte(data);
-			}
-
-			static inline uint8_t spi_receive(uint8_t data)
-			{
-				return SPI_ReceiveByte(data);
-			}
-
-			static inline uint8_t fetch_flash_byte(const uint8_t *data)
-			{
-				return *data;
-			}
-
-		#endif /* __TRICORE__ */
-
-		#if defined (__SAMC21E18A__)
-
-		#include "sam.h"
-
-		#define EVE_DMA
-
-		#if defined (EVE_DMA)
-		#include "EVE_target.h"
-		#endif
-
-		static inline void DELAY_MS(uint16_t val)
-		{
-			uint16_t counter;
-
-			while(val > 0)
-			{
-				for(counter=0; counter < 8000;counter++) // ~1ms at 48MHz Core-Clock
-				{
-					__asm__ volatile ("nop");
-				}
-				val--;
-			}
-		}
-
-		static inline void EVE_pdn_set(void)
-		{
-			REG_PORT_OUTCLR0 = PORT_PA03;
-		}
-
-		static inline void EVE_pdn_clear(void)
-		{
-			REG_PORT_OUTSET0 = PORT_PA03;
-		}
-
-		static inline void EVE_cs_set(void)
-		{
-			REG_PORT_OUTCLR0 = PORT_PA05;
-		}
-
-		static inline void EVE_cs_clear(void)
-		{
-			REG_PORT_OUTSET0 = PORT_PA05;
-		}
-
-		static inline void spi_transmit_async(uint8_t data)
-		{
-			#if defined (EVE_DMA)
-				EVE_dma_buffer[EVE_dma_buffer_index++] = data;
-			#else
-				uint8_t dummy;
-
-				REG_SERCOM0_SPI_DATA = data;
-				while((REG_SERCOM0_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-				dummy = REG_SERCOM0_SPI_DATA;
-				dummy = dummy;
-			#endif
-		}
-
-		static inline void spi_transmit(uint8_t data)
-		{
-			uint8_t dummy;
-
-			REG_SERCOM0_SPI_DATA = data;
-			while((REG_SERCOM0_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-			dummy = REG_SERCOM0_SPI_DATA;
-			dummy = dummy;
-		}
-
-		static inline uint8_t spi_receive(uint8_t data)
-		{
-			REG_SERCOM0_SPI_DATA = data;
-			while((REG_SERCOM0_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-			return REG_SERCOM0_SPI_DATA;
-		}
-
-		static inline uint8_t fetch_flash_byte(const uint8_t *data)
-		{
-			return *data;
-		}
-
-		#endif /* __SAMC21J18A__ */
-
-		#if defined (__SAME51J19A__)
-
-		#include "sam.h"
-
-//		#define EVE_DMA
-
-		#if defined (EVE_DMA)
-			#include "EVE_target.h"
-		#endif
-
-		static inline void DELAY_MS(uint16_t val)
-		{
-			uint16_t counter;
-
-			while(val > 0)
-			{
-				for(counter=0; counter < 8800;counter++) /* ~1ms at 120MHz Core-Clock, according to my Logic-Analyzer */
-				{
-					__asm__ volatile ("nop");
-				}
-				val--;
-			}
-		}
-
-		static inline void EVE_pdn_set(void)
-		{
-			REG_PORT_OUTCLR1 = PORT_PB31;
-		}
-
-		static inline void EVE_pdn_clear(void)
-		{
-			REG_PORT_OUTSET1 = PORT_PB31;
-		}
-
-		static inline void EVE_cs_set(void)
-		{
-			REG_PORT_OUTCLR1 = PORT_PB01;
-		}
-
-		static inline void EVE_cs_clear(void)
-		{
-			REG_PORT_OUTSET1 = PORT_PB01;
-		}
-
-		static inline void spi_transmit_async(uint8_t data)
-		{
-			#if defined (EVE_DMA)
-				EVE_dma_buffer[EVE_dma_buffer_index++] = data;
-			#else
-				uint8_t dummy;
-
-				REG_SERCOM5_SPI_DATA = data;
-				while((REG_SERCOM5_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-				dummy = REG_SERCOM5_SPI_DATA;
-				dummy = dummy;
-			#endif
-		}
-
-		static inline void spi_transmit(uint8_t data)
-		{
-			uint8_t dummy;
-
-			REG_SERCOM5_SPI_DATA = data;
-			while((REG_SERCOM5_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-			dummy = REG_SERCOM5_SPI_DATA;
-			dummy = dummy;
-		}
-
-		static inline uint8_t spi_receive(uint8_t data)
-		{
-			REG_SERCOM5_SPI_DATA = data;
-			while((REG_SERCOM5_SPI_INTFLAG & SERCOM_SPI_INTFLAG_TXC) == 0);
-			return REG_SERCOM5_SPI_DATA;
-		}
-
-		static inline uint8_t fetch_flash_byte(const uint8_t *data)
-		{
-			return *data;
-		}
-
-		#endif /* __SAME51J19A__ */
-
-
-	#endif
-#endif
-
-#if defined (ARDUINO)
-	#include <stdio.h>
-	#include <SPI.h>
-
-	#define EVE_CS 		9
-	#define EVE_PDN		8
-
-	#define DELAY_MS(ms) delay(ms)
-
-	#if defined (ESP8266)
-
-	#endif
-
-	#if	defined (__AVR__)
-		#include <avr/pgmspace.h>
-	#endif
-
-
-	static inline void EVE_pdn_set(void)
-	{
-		digitalWrite(EVE_PDN, LOW);	/* Power-Down low */
-	}
-
-	static inline void EVE_pdn_clear(void)
-	{
-		digitalWrite(EVE_PDN, HIGH);	/* Power-Down high */
-	}
-
-	static inline void EVE_cs_set(void)
-	{
-		SPI.setDataMode(SPI_MODE0);
-		digitalWrite(EVE_CS, LOW);
-	}
-
-	static inline void EVE_cs_clear(void)
-	{
-		digitalWrite(EVE_CS, HIGH);
-	}
-
-	#if defined (ESP8266)
-		static inline void spi_transmit_async(uint8_t data)
-		{
-			SPI.write(data);
-		}
-
-		static inline void spi_transmit(uint8_t data)
-		{
-			SPI.write(data);
-		}
-	#else
-		static inline void spi_transmit_async(uint8_t data)
-		{
-			SPI.transfer(data);
-		}
-
-		static inline void spi_transmit(uint8_t data)
-		{
-			SPI.transfer(data);
-		}
-	#endif
-
-	static inline uint8_t spi_receive(uint8_t data)
-	{
-		return SPI.transfer(data);
-	}
-
-	static inline uint8_t fetch_flash_byte(const uint8_t *data)
-	{
-		#if	defined (__AVR__)
-			#if defined(RAMPZ)
-				return(pgm_read_byte_far(data));
-			#else
-				return(pgm_read_byte_near(data));
-			#endif
-		#else /* this may fail on your Arduino system that is not AVR and that I am not aware of */
-			return *data;
-		#endif
-	}
-
-#endif /* Arduino */
+#define eve_ritft43
 
 
 /* display timing parameters below */
@@ -702,142 +217,72 @@
 #endif
 
 
-/* some test setup */
-#if defined (EVE_800x480x)
-#define EVE_HSIZE	(800L)	/* Thd Length of visible part of line (in PCLKs) - display width */
-#define EVE_VSIZE	(480L)	/* Tvd Number of visible lines (in lines) - display height */
+// SAMPLE CONFIGURATIONS-------------------------------------------------------
 
-#define EVE_VSYNC0	(0L)	/* Tvf Vertical Front Porch */
-#define EVE_VSYNC1	(10L)	/* Tvf + Tvp Vertical Front Porch plus Vsync Pulse width */
-#define EVE_VOFFSET	(35L)	/* Tvf + Tvp + Tvb Number of non-visible lines (in lines) */
-#define EVE_VCYCLE	(516L)	/* Tv Total number of lines (visible and non-visible) (in lines) */
-#define EVE_HSYNC0	(0L)	 /* (40L)	// Thf Horizontal Front Porch */
-#define EVE_HSYNC1	(88L)	/* Thf + Thp Horizontal Front Porch plus Hsync Pulse width */
-#define EVE_HOFFSET	(169L)	/* Thf + Thp + Thb Length of non-visible part of line (in PCLK cycles) */
-#define EVE_HCYCLE 	(969L)	/* Th Total length of line (visible and non-visible) (in PCLKs) */
-#define EVE_PCLKPOL	(1L)	/* PCLK polarity (0 = rising edge, 1 = falling edge) */
-#define EVE_SWIZZLE	(0L)	/* Defines the arrangement of the RGB pins of the FT800 */
-#define EVE_PCLK	(2L)	/* 60MHz / REG_PCLK = PCLK frequency	30 MHz */
-#define EVE_CSPREAD	(1L)	/* helps with noise, when set to 1 fewer signals are changed simultaneously, reset-default: 1 */
-#define EVE_TOUCH_RZTHRESH (1200L)	/* touch-sensitivity */
-#define EVE_HAS_CRYSTAL
-#define FT81X_ENABLE
-#endif
-
+#define EVE_800x480x_CONFIG (eve_display_t){ \
+    .hsize = 800, .vsize = 400, \
+    .vsync0 = 0, .vsync1 = 10, .voffset = 35, .vcycle = 516, \
+    .hsync0 = 0, .hsync1 = 88, .hoffset = 169, .hcycle = 969, \
+    .pclkpol_falling = true, .swizzle = 0, .pclk = 2, .cspread = 1, \
+    .touch_rzthresh = 1200, .has_crystal = true, \
+}
 
 /* VM800B35A: FT800 320x240 3.5" FTDI FT800 */
-#if defined (EVE_VM800B35A)
-#define EVE_HSIZE	(320L)	/* Thd Length of visible part of line (in PCLKs) - display width */
-#define EVE_VSIZE	(240L)	/* Tvd Number of visible lines (in lines) - display height */
+#define EVE_VM800B35A_CONFIG (eve_display_t){ \
+    .hsize = 320, .vsize = 240, \
+    .vsync0 = 0, .vsync1 = 2, .voffset = 13, .vcycle = 263, \
+    .hsync0 = 0, .hsync1 = 10, .hoffset = 70, .hcycle = 408, \
+    .pclkpol_falling = false, .swizzle = 2, .pclk = 8, .cspread = 1, \
+    .touch_rzthresh = 1200, .has_crystal = true, \
+}
 
-#define EVE_VSYNC0	(0L)	/* Tvf Vertical Front Porch */
-#define EVE_VSYNC1	(2L)	/* Tvf + Tvp Vertical Front Porch plus Vsync Pulse width */
-#define EVE_VOFFSET	(13L)	/* Tvf + Tvp + Tvb Number of non-visible lines (in lines) */
-#define EVE_VCYCLE	(263L)	/* Tv Total number of lines (visible and non-visible) (in lines) */
-#define EVE_HSYNC0	(0L)	/* Thf Horizontal Front Porch */
-#define EVE_HSYNC1	(10L)	/* Thf + Thp Horizontal Front Porch plus Hsync Pulse width */
-#define EVE_HOFFSET	(70L)	/* Thf + Thp + Thb Length of non-visible part of line (in PCLK cycles) */
-#define EVE_HCYCLE 	(408L)	/* Th Total length of line (visible and non-visible) (in PCLKs) */
-#define EVE_PCLKPOL	(0L)	/* PCLK polarity (0 = rising edge, 1 = falling edge) */
-#define EVE_SWIZZLE	(2L)	/* Defines the arrangement of the RGB pins of the FT800 */
-#define EVE_PCLK	(8L)	/* 48MHz / REG_PCLK = PCLK frequency */
-#define EVE_CSPREAD	(1L)	/* helps with noise, when set to 1 fewer signals are changed simultaneously, reset-default: 1 */
-#define EVE_TOUCH_RZTHRESH (1200L)	/* touch-sensitivity */
-#define EVE_HAS_CRYSTAL		/* use external crystal or internal oscillator? */
-#endif
 
 
 /* FTDI/BRT EVE modules VM800B43A and VM800B50A  FT800 480x272 4.3" and 5.0" */
-#if defined (EVE_VM800B43A) || defined (EVE_VM800B50A)
-#define EVE_HSIZE	(480L)
-#define EVE_VSIZE	(272L)
+#define EVE_VM800B43A_CONFIG EVE_VM800B50A_CONFIG
+#define EVE_VM800B50A_CONFIG (eve_display_t){ \
+    .hsize = 480, .vsize = 272, \
+    .vsync0 = 0, .vsync1 = 10, .voffset = 12, .vcycle = 292, \
+    .hsync0 = 0, .hsync1 = 41, .hoffset = 43, .hcycle = 548, \
+    .pclkpol_falling = true, .swizzle = 0, .pclk = 5, .cspread = 1, \
+    .touch_rsthresh = 1200, .has_crystal = true, \
+}
 
-#define EVE_VSYNC0	(0L)
-#define EVE_VSYNC1	(10L)
-#define EVE_VOFFSET	(12L)
-#define EVE_VCYCLE	(292L)
-#define EVE_HSYNC0	(0L)
-#define EVE_HSYNC1	(41L)
-#define EVE_HOFFSET	(43L)
-#define EVE_HCYCLE 	(548L)
-#define EVE_PCLKPOL	(1L)
-#define EVE_SWIZZLE	(0L)
-#define EVE_PCLK	(5L)
-#define EVE_CSPREAD	(1L)
-#define EVE_TOUCH_RZTHRESH (1200L)
-#define EVE_HAS_CRYSTAL
-#endif
 
 
 /* untested */
 /* FTDI/BRT EVE2 modules VM810C50A-D, ME812A-WH50R and ME813A-WH50C, 800x480 5.0" */
-#if defined (EVE_VM810C) || defined (EVE_ME812A) || defined (EVE_ME813A)
-#define EVE_HSIZE	(800L)
-#define EVE_VSIZE	(480L)
-
-#define EVE_VSYNC0	(0L)
-#define EVE_VSYNC1	(3L)
-#define EVE_VOFFSET	(32L)
-#define EVE_VCYCLE	(525L)
-#define EVE_HSYNC0	(0L)
-#define EVE_HSYNC1	(48L)
-#define EVE_HOFFSET	(88L)
-#define EVE_HCYCLE 	(928L)
-#define EVE_PCLKPOL	(1L)
-#define EVE_SWIZZLE	(0L)
-#define EVE_PCLK	(2L)
-#define EVE_CSPREAD	(0L)
-#define EVE_TOUCH_RZTHRESH (1200L)
-#define EVE_HAS_CRYSTAL
-#define FT81X_ENABLE
-#endif
+#define EVE_VM810C_CONFIG EVE_ME813A_CONFIG
+#define EVE_ME812A_CONFIG EVE_ME813A_CONFIG
+#define EVE_ME813A_CONFIG (eve_display_t){ \
+    .hsize = 800, .vsize = 480, \
+    .vsync0 = 0, .vsync1 = 3, .voffset = 32, .vcycle = 525, \
+    .hsync0 = 0, .hsync1 = 48, .hoffset = 88, .hcycle = 928, \
+    .pclkpol_falling = true, .swizzle = 0, .pclk = 2, .cspread = 0, \
+    .touch_rzthresh = 1200, .has_crystal = true, \
+}
 
 
 /* FT810CB-HY50HD: FT810 800x480 5.0" HAOYU */
-#if defined (EVE_FT810CB_HY50HD)
-#define EVE_HSIZE	(800L)
-#define EVE_VSIZE	(480L)
-
-#define EVE_VSYNC0	(0L)
-#define EVE_VSYNC1	(2L)
-#define EVE_VOFFSET	(13L)
-#define EVE_VCYCLE	(525L)
-#define EVE_HSYNC0	(0L)
-#define EVE_HSYNC1	(20L)
-#define EVE_HOFFSET	(64L)
-#define EVE_HCYCLE 	(952L)
-#define EVE_PCLKPOL	(1L)
-#define EVE_SWIZZLE	(0L)
-#define EVE_PCLK	(2L)
-#define EVE_CSPREAD	(1L)
-#define EVE_TOUCH_RZTHRESH (2000L)	/* touch-sensitivity */
-#define EVE_HAS_CRYSTAL
-#define FT81X_ENABLE
-#endif
+#define EVE_FT810CB_HY50D_CONFIG (eve_display_t){ \
+    .hsize = 800, .vsize = 480, \
+    .vsync0 = 0, .vsync1 = 2, .voffset = 13, .vcycle = 525, \
+    .hsync0 = 0, .hsync1 = 20, .hoffset = 64, .hcycle = 952, \
+    .pclkpol_falling = true, .swizzle = 0, .pclk = 2, .cspread = 1, \
+    .touch_rzthresh = 2000, .has_crystal = true, \
+}
 
 
 /* FT811CB-HY50HD: FT811 800x480 5.0" HAOYU */
-#if defined (EVE_FT811CB_HY50HD)
-#define EVE_HSIZE	(800L)
-#define EVE_VSIZE	(480L)
+#define EVE_FT811CB_HY50D_CONFIG (eve_display_t) { \
+    .hsize = 800, .vsize = 480, \
+    .vsync0 = 0, .vsync1 = 2, .voffset = 13, .vcycle = 525, \
+    .hsync0 = 0, .hsync1 = 20, .hoffset = 64, .hcycle = 952, \
+    .pclkpol_falling = true, .swizzle = 0, .pclk = 2, .cspread = 1, \
+    .touch_rzthresh = 1200, .has_crystal = true, \
+}
 
-#define EVE_VSYNC0	(0L)
-#define EVE_VSYNC1	(2L)
-#define EVE_VOFFSET	(13L)
-#define EVE_VCYCLE	(525L)
-#define EVE_HSYNC0	(0L)
-#define EVE_HSYNC1	(20L)
-#define EVE_HOFFSET	(64L)
-#define EVE_HCYCLE 	(952L)
-#define EVE_PCLKPOL	(1L)
-#define EVE_SWIZZLE	(0L)
-#define EVE_PCLK	(2L)
-#define EVE_CSPREAD	(1L)
-#define EVE_TOUCH_RZTHRESH (1200L)	/* touch-sensitivity */
-#define EVE_HAS_CRYSTAL
-#define FT81X_ENABLE
-#endif
-
+// TODO convert the rest
 
 /* untested */
 /* G-ET0700G0DM6 800x480 7.0" Glyn */
